@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FleetSight | Tractor Predictive Maintenance</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="media/john-deere-logo-black-and-white.png" alt="John Deere logo" class="logo-img" width="80"/>
+      <div>
+        <p class="eyebrow">Dealer Command Center</p>
+        <h1>DeerMagic</h1>
+      </div>
+    </div>
+    <button id="refreshBtn">Refresh analysis</button>
+  </header>
+
+  <main>
+    <section class="hero card">
+      <div>
+        <p class="eyebrow">Sensor database analysis</p>
+        <h2>Spot faults before downtime hits the field.</h2>
+        <p>The backend evaluates engine temperature, oil pressure, hydraulic pressure, vibration, battery voltage, DPF load, and usage hours to generate tendencies, current faults, and predictive maintenance alerts.</p>
+      </div>
+      <div class="hero-grid" id="summaryCards"></div>
+    </section>
+
+    <section class="grid two">
+      <div class="card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Client machinery alerts</p>
+            <h2>Predicted and current faults</h2>
+          </div>
+          <select id="severityFilter" aria-label="Filter alerts by severity">
+            <option value="all">All severities</option>
+            <option value="critical">Critical</option>
+            <option value="warning">Warning</option>
+            <option value="watch">Watch</option>
+          </select>
+        </div>
+        <div id="alertsList" class="alert-list"></div>
+      </div>
+
+      <div class="card">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Dealer usage dashboard</p>
+            <h2>Usage by region</h2>
+          </div>
+        </div>
+        <div id="regionUsage" class="bars"></div>
+        <hr />
+        <h3>Prepare parts for likely client faults</h3>
+        <div id="partsForecast" class="parts"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Fleet health</p>
+          <h2>Machines, tendencies, and risk</h2>
+        </div>
+        <input id="searchBox" placeholder="Search by machine, model, or client" />
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Machine</th><th>Client</th><th>Model</th><th>Hours</th><th>Risk</th><th>Main tendencies</th><th>Status</th></tr>
+          </thead>
+          <tbody id="fleetTable"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="partDialog">
+    <form method="dialog">
+      <h2>Parts prepared</h2>
+      <p id="dialogMessage"></p>
+      <button>Close</button>
+    </form>
+  </dialog>
+
+  <footer>
+    <p>Prototype only. It uses John Deere-inspired colors and a text logo placeholder; replace with licensed brand assets only when you have permission.</p>
+  </footer>
+  <script src="app.js"></script>
+</body>
+</html>
