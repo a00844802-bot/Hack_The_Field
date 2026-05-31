@@ -151,8 +151,10 @@ function labelMetric(metric) {
 
 function translateDirection(direction) {
   return direction === 'increasing'
+    || direction === 'up'
     ? 'aumenta'
     : direction === 'decreasing'
+    || direction === 'down'
     ? 'disminuye'
     : 'estable';
 }
@@ -180,7 +182,7 @@ loadAnalysis().catch(err => {
 
 setInterval(loadAnalysis, 5000);
 
-// Dealer keyword-based chat widget
+// Dealer Gemini chat widget with keyword fallback
 (function(){
   function initChat(){
     const toggle = document.getElementById('chatToggle');
@@ -198,14 +200,34 @@ setInterval(loadAnalysis, 5000);
       el.textContent = text;
       messages.appendChild(el);
       messages.scrollTop = messages.scrollHeight;
+      return el;
     }
 
     function botReply(text){
       appendMessage('bot', text);
     }
 
+    function setChatBusy(busy){
+      input.disabled = busy;
+      form.querySelector('button').disabled = busy;
+    }
+
+    async function askAssistant(q){
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: q }),
+      });
+      const data = await res.json();
+      if(!res.ok) throw new Error(data.error || 'No se pudo contactar al asistente.');
+      if(data.source === 'keyword-fallback' && data.fallbackReason) {
+        console.warn('Gemini unavailable, keyword fallback used:', data.fallbackReason);
+      }
+      return data.reply;
+    }
+
     function helpText(){
-      return "Prueba palabras clave: 'resumen', 'alertas recientes', 'repuestos', 'máquinas', 'riesgo', 'últimos eventos'.";
+      return "Puedes preguntar por resumen, alertas recientes, repuestos, maquinas, riesgo o ultimos eventos.";
     }
 
     function summarizeAnalysis(){
@@ -232,36 +254,44 @@ setInterval(loadAnalysis, 5000);
       if(!analysis) return 'Análisis no disponible.';
       const top = analysis.fleet.slice().sort((a,b)=>b.riskScore - a.riskScore).slice(0,3);
       if(top.length===0) return 'Sin datos de riesgo.';
-      return top.map(t => `${t.machine.id} — ${t.customer} — Riesgo ${t.riskScore}`).join('\n');
+      return top.map(t => `${t.machine.id} — ${t.machine.customer} — Riesgo ${t.riskScore}`).join('\n');
     }
 
     function handleQuery(q){
-      q = q.toLowerCase();
+      q = q.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
       if(q.includes('resumen') || q.includes('summary') || q.includes('important')) return summarizeAnalysis();
       if(q.includes('alert') || q.includes('alertas') || q.includes('reciente') || q.includes('recent')) return recentAlerts();
       if(q.includes('repuesto') || q.includes('parts') || q.includes('repuestos')) return partsForecast();
-      if(q.includes('máquina') || q.includes('maquina') || q.includes('machines') || q.includes('fleet')) return `Máquinas monitorizadas: ${analysis ? analysis.dealer.summary.machines : '—'}`;
+      if(q.includes('maquina') || q.includes('machines') || q.includes('fleet')) return `Máquinas monitorizadas: ${analysis ? analysis.dealer.summary.machines : '—'}`;
       if(q.includes('riesgo') || q.includes('risk') || q.includes('top risk')) return topRisk();
-      if(q.includes('evento') || q.includes('event') || q.includes('último') || q.includes('ultimo')) return recentAlerts();
+      if(q.includes('evento') || q.includes('event') || q.includes('ultimo')) return recentAlerts();
       return "No he entendido. " + helpText();
     }
 
     toggle.addEventListener('click', ()=>{
       const hidden = popup.getAttribute('aria-hidden') === 'true';
       popup.setAttribute('aria-hidden', String(!hidden));
-      if(!hidden) input.focus();
+      if(hidden) input.focus();
     });
     closeBtn.addEventListener('click', ()=> popup.setAttribute('aria-hidden','true'));
 
-    form.addEventListener('submit', (ev)=>{
+    form.addEventListener('submit', async (ev)=>{
       ev.preventDefault();
       const q = input.value.trim();
       if(!q) return;
       appendMessage('user', q);
-      const reply = handleQuery(q);
-      // small delay to simulate thinking
-      setTimeout(()=> botReply(reply), 250);
+      const pending = appendMessage('bot', 'Consultando Gemini...');
       input.value = '';
+      setChatBusy(true);
+      try {
+        pending.textContent = await askAssistant(q);
+      } catch (error) {
+        console.warn('Assistant endpoint unavailable, local keyword fallback used:', error);
+        pending.textContent = handleQuery(q);
+      } finally {
+        setChatBusy(false);
+        input.focus();
+      }
     });
 
     // welcome message

@@ -48,6 +48,7 @@ button, select, input {
 }
 button { background: var(--jd-yellow); color: var(--jd-black); font-weight: 800; cursor: pointer; border: none; }
 button:hover { filter: brightness(.98); transform: translateY(-1px); }
+button:disabled, input:disabled { opacity: .65; cursor: wait; }
 .grid.two { display: grid; grid-template-columns: 1.3fr 1fr; gap: 1.5rem; align-items: start; }
 .section-head { display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom: 1rem; }
 .alert-list { display: grid; gap: .75rem; max-height: 620px; overflow: auto; padding-right: .25rem; }
@@ -89,7 +90,7 @@ dialog { border: none; border-radius: 20px; padding: 1.5rem; box-shadow: 0 20px 
 .chat-title { font-weight:800; }
 .chat-close { border: none; background: transparent; color: white; font-size: 18px; cursor: pointer; }
 .chat-messages { padding: 12px; max-height: 320px; overflow: auto; background: #fbfff7; display:flex; flex-direction:column; gap:8px; }
-.chat-message { padding: 8px 10px; border-radius: 12px; max-width: 84%; box-shadow: 0 4px 12px rgba(0,0,0,.06); }
+.chat-message { padding: 8px 10px; border-radius: 12px; max-width: 84%; box-shadow: 0 4px 12px rgba(0,0,0,.06); white-space: pre-line; }
 .chat-message.user { background: #e8f3e5; color: var(--jd-black); margin-left: auto; }
 .chat-message.bot { background: #ffffff; border:1px solid var(--line); color: var(--muted); }
 .chat-form { display:flex; gap:8px; padding: 10px; border-top:1px solid var(--line); }

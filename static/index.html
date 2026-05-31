@@ -91,7 +91,7 @@
   </footer>
   <script src="app.js"></script>
 
-  <!-- Chat widget: dealer keyword-based assistant -->
+  <!-- Chat widget: Gemini dealer assistant with keyword fallback -->
   <div id="chatWidget">
     <button id="chatToggle" class="chat-button" aria-label="Open dealer assistant">💬</button>
     <div id="chatPopup" class="chat-popup" aria-hidden="true">
@@ -101,7 +101,7 @@
       </div>
       <div id="chatMessages" class="chat-messages" role="log" aria-live="polite"></div>
       <form id="chatForm" class="chat-form">
-        <input id="chatInput" autocomplete="off" placeholder="Escribe: resumen, alertas recientes, repuestos..." />
+        <input id="chatInput" autocomplete="off" placeholder="Pregunta por fallas, riesgo o repuestos..." />
         <button type="submit">Enviar</button>
       </form>
     </div>

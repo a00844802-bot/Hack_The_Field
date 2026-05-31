@@ -16,14 +16,19 @@ import socketserver
 import sqlite3
 import struct
 import threading
+import unicodedata
 from datetime import datetime, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
+from urllib import error as urlerror
+from urllib import request as urlrequest
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 DB_PATH = BASE_DIR / "tractor_sensors.db"
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_TIMEOUT_SECONDS = float(os.environ.get("GEMINI_TIMEOUT_SECONDS", "20"))
 
 MODELS = ["8R 410", "7R 330", "6M 155", "9RX 640", "5E 75"]
 PARTS = {
@@ -34,6 +39,62 @@ PARTS = {
     "battery_low": {"part": "Heavy-duty battery", "sku": "JD-BAT-7710"},
     "dpf_saturation": {"part": "DPF service kit", "sku": "JD-DPF-1500"},
 }
+FAULT_RULES = [
+    {
+        "code": "engine_overheat",
+        "title": "Engine temperature rising",
+        "metric": "engine_temp",
+        "threshold": 105,
+        "direction": "above",
+        "detail": "Cooling system may overheat",
+        "weight": 5,
+    },
+    {
+        "code": "oil_pressure_low",
+        "title": "Oil pressure falling",
+        "metric": "oil_pressure",
+        "threshold": 34,
+        "direction": "below",
+        "detail": "Lubrication risk",
+        "weight": 5,
+    },
+    {
+        "code": "hydraulic_pressure_drop",
+        "title": "Hydraulic pressure dropping",
+        "metric": "hydraulic_pressure",
+        "threshold": 2600,
+        "direction": "below",
+        "detail": "Hydraulic performance loss",
+        "weight": 4,
+    },
+    {
+        "code": "vibration_high",
+        "title": "Abnormal vibration",
+        "metric": "vibration",
+        "threshold": 4.8,
+        "direction": "above",
+        "detail": "Bearing, belt, or mount wear",
+        "weight": 4,
+    },
+    {
+        "code": "battery_low",
+        "title": "Battery voltage weakening",
+        "metric": "battery_voltage",
+        "threshold": 11.9,
+        "direction": "below",
+        "detail": "Starting/charging risk",
+        "weight": 3,
+    },
+    {
+        "code": "dpf_saturation",
+        "title": "DPF load increasing",
+        "metric": "dpf_load",
+        "threshold": 85,
+        "direction": "above",
+        "detail": "Regeneration/service may be needed",
+        "weight": 3,
+    },
+]
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 ws_clients: list[object] = []
@@ -248,18 +309,17 @@ def analyze_machine(machine: sqlite3.Row, rows: list[sqlite3.Row]) -> dict:
         "battery_voltage": [r["battery_voltage"] for r in last24],
         "dpf_load": [r["dpf_load"] for r in last24],
     }
-    rules = [
-        ("engine_overheat", "Engine temperature rising", "engine_temp", 105, "above", "Cooling system may overheat", 5),
-        ("oil_pressure_low", "Oil pressure falling", "oil_pressure", 34, "below", "Lubrication risk", 5),
-        ("hydraulic_pressure_drop", "Hydraulic pressure dropping", "hydraulic_pressure", 2600, "below", "Hydraulic performance loss", 4),
-        ("vibration_high", "Abnormal vibration", "vibration", 4.8, "above", "Bearing, belt, or mount wear", 4),
-        ("battery_low", "Battery voltage weakening", "battery_voltage", 11.9, "below", "Starting/charging risk", 3),
-        ("dpf_saturation", "DPF load increasing", "dpf_load", 85, "above", "Regeneration/service may be needed", 3),
-    ]
     alerts = []
     tendencies = []
     cycle_count = sum(1 for r in rows if r["fuel_rate"] > 12.5)
-    for code, title, metric, threshold, direction, detail, weight in rules:
+    for rule in FAULT_RULES:
+        code = rule["code"]
+        title = rule["title"]
+        metric = rule["metric"]
+        threshold = rule["threshold"]
+        direction = rule["direction"]
+        detail = rule["detail"]
+        weight = rule["weight"]
         current = float(latest[metric])
         m_slope = slope(metrics[metric])
         trend_value = m_slope * 24
@@ -351,6 +411,256 @@ def get_analysis() -> dict:
                 "partsForecast": sorted(part_forecast.values(), key=lambda p: -p["quantity"]),
             },
         }
+
+
+def row_dicts(rows: list[sqlite3.Row]) -> list[dict]:
+    return [dict(row) for row in rows]
+
+
+def get_database_context() -> dict:
+    """Build the complete data snapshot Gemini receives with field meanings."""
+    with connect() as conn:
+        machines = row_dicts(conn.execute("SELECT * FROM machines ORDER BY id").fetchall())
+        readings = row_dicts(conn.execute("SELECT * FROM readings ORDER BY ts, id").fetchall())
+        parts_preparations = row_dicts(
+            conn.execute("SELECT * FROM parts_preparations ORDER BY created_at, id").fetchall()
+        )
+
+    return {
+        "application": "DeereMagic predictive maintenance dashboard for tractor dealer support",
+        "databaseFile": DB_PATH.name,
+        "snapshotGeneratedAt": datetime.now().isoformat(timespec="seconds"),
+        "dataDictionary": {
+            "machines": {
+                "meaning": "One row per monitored tractor/customer machine.",
+                "columns": {
+                    "id": "Unique tractor identifier used by all telemetry and alerts.",
+                    "model": "Tractor model name.",
+                    "customer": "Customer that owns or operates the tractor.",
+                    "dealer_region": "Dealer service region responsible for the machine.",
+                    "hours": "Total machine operating hours.",
+                },
+            },
+            "readings": {
+                "meaning": "Timestamped sensor telemetry rows. Each row belongs to one machine_id.",
+                "columns": {
+                    "id": "Unique telemetry row id.",
+                    "machine_id": "Foreign key to machines.id.",
+                    "ts": "ISO timestamp for when this reading was recorded.",
+                    "engine_temp": "Engine temperature in Celsius. High values indicate overheating risk.",
+                    "oil_pressure": "Oil pressure reading. Low values indicate lubrication risk.",
+                    "hydraulic_pressure": "Hydraulic pressure reading. Low values indicate hydraulic system risk.",
+                    "vibration": "Vibration level. High values can indicate bearing, belt, or mount wear.",
+                    "battery_voltage": "Battery voltage. Low values indicate starting or charging risk.",
+                    "dpf_load": "Diesel particulate filter load percentage. High values indicate service/regeneration risk.",
+                    "fuel_rate": "Fuel use rate. Values above 12.5 are counted as active work cycles.",
+                },
+            },
+            "parts_preparations": {
+                "meaning": "Dealer actions already taken to prepare a part for a predicted or current fault.",
+                "columns": {
+                    "id": "Unique preparation row id.",
+                    "machine_id": "Machine the prepared part is intended for.",
+                    "sku": "Dealer stock keeping unit for the part.",
+                    "part": "Prepared part name.",
+                    "reason": "Alert or service reason for preparing the part.",
+                    "status": "Preparation workflow status.",
+                    "created_at": "ISO timestamp when the part was prepared.",
+                },
+            },
+            "derivedFaultData": {
+                "meaning": "Computed from all machines/readings by the backend analysis model.",
+                "fields": {
+                    "alerts": "Current and predictive faults sorted by severity.",
+                    "fleet": "Per-machine latest telemetry, trends, alerts, risk score, status, usage hours, and cycles.",
+                    "dealer.summary": "Fleet-level counts of critical, predictive, and healthy machines.",
+                    "dealer.partsForecast": "Recommended part quantities grouped by SKU based on active alerts.",
+                    "dealer.usageByRegion": "Machine count, operating hours, and average risk by dealer region.",
+                    "hoursToThreshold": "Estimated hours until a metric crosses its fault threshold; 0 means the fault is active now.",
+                    "confidence": "Heuristic confidence score from 0 to 1.",
+                    "riskScore": "0 to 100 machine risk score built from alert severity and machine hours.",
+                },
+            },
+        },
+        "faultLogic": {
+            "severityDefinitions": {
+                "critical": "The latest metric has already crossed its threshold.",
+                "warning": "The trend predicts threshold crossing within 36 hours.",
+                "watch": "The trend predicts threshold crossing within 72 hours.",
+                "healthy": "No active or predictive alert was detected for the machine.",
+            },
+            "rules": [
+                {**rule, "recommendedPart": PARTS[rule["code"]]["part"], "sku": PARTS[rule["code"]]["sku"]}
+                for rule in FAULT_RULES
+            ],
+        },
+        "storedData": {
+            "machines": {"rowCount": len(machines), "rows": machines},
+            "readings": {"rowCount": len(readings), "rows": readings},
+            "parts_preparations": {"rowCount": len(parts_preparations), "rows": parts_preparations},
+        },
+        "derivedFaultData": get_analysis(),
+    }
+
+
+def build_gemini_prompt(question: str) -> str:
+    context = get_database_context()
+    context_json = json.dumps(context, ensure_ascii=False, indent=2)
+    return (
+        "Use the complete DeereMagic tractor maintenance context below to answer the dealer question.\n"
+        "The JSON includes a data dictionary explaining what every table, column, fault rule, alert, "
+        "risk score, and stored row means. Treat storedData as the raw contents of tractor_sensors.db "
+        "and derivedFaultData as the backend fault analysis computed from those rows.\n"
+        "Return a text only response, do not use formating.\n\n"
+        "Complete context JSON:\n"
+        f"{context_json}\n\n"
+        "Dealer question:\n"
+        f"{question}"
+    )
+
+
+def extract_gemini_text(payload: dict) -> str:
+    candidates = payload.get("candidates") or []
+    if not candidates:
+        raise RuntimeError("Gemini returned no candidates")
+
+    parts = candidates[0].get("content", {}).get("parts", [])
+    text = "".join(part.get("text", "") for part in parts if isinstance(part, dict)).strip()
+    if not text:
+        raise RuntimeError("Gemini returned an empty response")
+    return text
+
+
+def gemini_chat_reply(question: str) -> str:
+    api_key = (
+        os.environ.get("GEMINI_API_KEY")
+        or os.environ.get("GOOGLE_API_KEY")
+        or os.environ.get("GOOGLE_GENERATIVE_AI_API_KEY")
+    )
+    if not api_key:
+        raise RuntimeError("Missing GEMINI_API_KEY")
+
+    model_name = GEMINI_MODEL[7:] if GEMINI_MODEL.startswith("models/") else GEMINI_MODEL
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+    payload = {
+        "system_instruction": {
+            "parts": [
+                {
+                    "text": (
+                        "You are the DeereMagic dealer assistant. Answer in Spanish unless the user asks "
+                        "for another language. Use only the supplied tractor database and fault-analysis "
+                        "context. Be concise, cite machine ids and SKUs when relevant, and explain the "
+                        "meaning of sensor values or faults in plain dealer-service terms."
+                    )
+                }
+            ]
+        },
+        "contents": [{"role": "user", "parts": [{"text": build_gemini_prompt(question)}]}],
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1200},
+    }
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urlrequest.Request(
+        url,
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key,
+        },
+        method="POST",
+    )
+
+    try:
+        with urlrequest.urlopen(req, timeout=GEMINI_TIMEOUT_SECONDS) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+    except urlerror.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Gemini API returned HTTP {exc.code}: {body[:300]}") from exc
+    except urlerror.URLError as exc:
+        raise RuntimeError(f"Gemini API request failed: {exc.reason}") from exc
+
+    return extract_gemini_text(response_payload)
+
+
+def normalize_query(text: str) -> str:
+    normalized = unicodedata.normalize("NFD", text.lower())
+    return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+
+
+def keyword_help_text() -> str:
+    return "Prueba palabras clave: 'resumen', 'alertas recientes', 'repuestos', 'maquinas', 'riesgo', 'ultimos eventos'."
+
+
+def label_metric(metric: str) -> str:
+    labels = {
+        "engine_temp": "temperatura del motor",
+        "oil_pressure": "presion de aceite",
+        "hydraulic_pressure": "presion hidraulica",
+        "vibration": "vibracion",
+        "battery_voltage": "voltaje de bateria",
+        "dpf_load": "carga del DPF",
+        "usage_hours": "horas de uso",
+        "cycles": "ciclos de trabajo",
+    }
+    return labels.get(metric, metric.replace("_", " "))
+
+
+def keyword_chat_reply(question: str) -> str:
+    analysis_data = get_analysis()
+    q = normalize_query(question)
+
+    if "resumen" in q or "summary" in q or "important" in q:
+        s = analysis_data["dealer"]["summary"]
+        return (
+            f"Resumen: {s['machines']} maquinas - Criticos: {s['critical']}, "
+            f"Predictivos: {s['predictive']}, Saludables: {s['healthy']}. "
+            f"Generado: {analysis_data['generatedAt']}"
+        )
+
+    if "alert" in q or "reciente" in q or "recent" in q or "evento" in q or "event" in q or "ultimo" in q:
+        alerts = analysis_data["alerts"][:5]
+        if not alerts:
+            return "No hay alertas recientes."
+        return "\n".join(
+            f"{a['machineId']}: {a['title']} ({a['severity']}) - {a['detail']}. "
+            f"{label_metric(a['metric'])}: {a['current']} / umbral {a['threshold']}"
+            for a in alerts
+        )
+
+    if "repuesto" in q or "parts" in q or "sku" in q:
+        parts = analysis_data["dealer"]["partsForecast"][:5]
+        if not parts:
+            return "No hay repuestos sugeridos ahora."
+        return "\n".join(f"{p['part']} (SKU {p['sku']}) - Cantidad {p['quantity']}" for p in parts)
+
+    if "maquina" in q or "machine" in q or "fleet" in q or "flota" in q:
+        return f"Maquinas monitorizadas: {analysis_data['dealer']['summary']['machines']}"
+
+    if "riesgo" in q or "risk" in q or "top risk" in q:
+        top = sorted(analysis_data["fleet"], key=lambda item: item["riskScore"], reverse=True)[:3]
+        if not top:
+            return "Sin datos de riesgo."
+        return "\n".join(
+            f"{item['machine']['id']} - {item['machine']['customer']} - Riesgo {item['riskScore']}"
+            for item in top
+        )
+
+    return "No he entendido. " + keyword_help_text()
+
+
+def answer_chat_message(body: dict) -> tuple[dict, int]:
+    question = str(body.get("message") or body.get("question") or "").strip()
+    if not question:
+        return {"error": "Missing message"}, 400
+
+    try:
+        return {"reply": gemini_chat_reply(question), "source": "gemini", "model": GEMINI_MODEL}, 200
+    except Exception as exc:
+        return {
+            "reply": keyword_chat_reply(question),
+            "source": "keyword-fallback",
+            "model": "keyword",
+            "fallbackReason": str(exc),
+        }, 200
 
 
 def add_sensor_reading(body: dict) -> dict:
@@ -464,6 +774,10 @@ class Handler(SimpleHTTPRequestHandler):
 
         if parsed.path == "/api/readings":
             data, status = add_sensor_reading(body)
+            return self._json(data, status)
+
+        if parsed.path == "/api/chat":
+            data, status = answer_chat_message(body)
             return self._json(data, status)
 
         if parsed.path == "/api/prepare-part":
