@@ -37,7 +37,13 @@
         <button onclick="preset('oil')">Trigger low oil pressure</button>
         <button onclick="preset('hydraulic')">Trigger hydraulic drop</button>
         <button onclick="preset('vibration')">Trigger vibration</button>
+        <button onclick="preset('battery')">Trigger battery low</button>
+        <button onclick="preset('dpf')">Trigger DPF saturation</button>
         <button onclick="sendReading()">Send telemetry</button>
+        <button onclick="generatePredictive('engine_temp','watch')">Trigger watch (engine temp)</button>
+        <button onclick="generatePredictive('engine_temp','warning')">Trigger warning (engine temp)</button>
+        <button onclick="generatePredictive('oil_pressure','watch')">Trigger watch (oil pressure)</button>
+        <button onclick="generatePredictive('oil_pressure','warning')">Trigger warning (oil pressure)</button>
       </div>
       <p class="muted small">After sending, return to the dashboard and click “Refresh analysis.”</p>
       <div id="status" class="status-box">Waiting for telemetry...</div>
@@ -57,9 +63,58 @@ function preset(name){
     overheat:{engine_temp:113,oil_pressure:41,hydraulic_pressure:2920,vibration:3.1,battery_voltage:12.5,dpf_load:58,fuel_rate:18},
     oil:{engine_temp:96,oil_pressure:29,hydraulic_pressure:2910,vibration:3.0,battery_voltage:12.5,dpf_load:60,fuel_rate:17},
     hydraulic:{engine_temp:94,oil_pressure:42,hydraulic_pressure:2420,vibration:3.4,battery_voltage:12.4,dpf_load:57,fuel_rate:16},
-    vibration:{engine_temp:95,oil_pressure:40,hydraulic_pressure:2890,vibration:5.6,battery_voltage:12.4,dpf_load:59,fuel_rate:16}
+    vibration:{engine_temp:95,oil_pressure:40,hydraulic_pressure:2890,vibration:5.6,battery_voltage:12.4,dpf_load:59,fuel_rate:16},
+    battery:{engine_temp:92,oil_pressure:42,hydraulic_pressure:2920,vibration:3.0,battery_voltage:11.5,dpf_load:55,fuel_rate:15},
+    dpf:{engine_temp:98,oil_pressure:42,hydraulic_pressure:2910,vibration:3.0,battery_voltage:12.4,dpf_load:91,fuel_rate:18}
   };
   setVals(presets[name]);
+}
+
+// Send a sequence of synthetic readings spaced over recent hours to create a predictive trend
+async function sendSequence(payloads, delay = 150){
+  for (const p of payloads){
+    try{
+      await fetch('/api/readings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(p)});
+    }catch(e){ console.warn('send failed', e); }
+    await new Promise(r => setTimeout(r, delay));
+  }
+}
+
+// Compute the 'end' value for a linear sequence that will produce an hours-to-threshold H (approx)
+function computeEndForH(start, threshold, steps, H){
+  const k = steps - 1;
+  const ratio = H / k;
+  return (threshold + ratio * start) / (1 + ratio);
+}
+
+// Generate predictive sequence for a metric. metric: field name, kind: 'watch'|'warning'
+async function generatePredictive(metric, kind){
+  // server thresholds from analysis rules (mirror of server logic)
+  const thresholds = { engine_temp:105, oil_pressure:34, hydraulic_pressure:2600, vibration:4.8, battery_voltage:11.9, dpf_load:85 };
+  const direction = { engine_temp: 'above', oil_pressure: 'below', hydraulic_pressure: 'below', vibration: 'above', battery_voltage: 'below', dpf_load: 'above' };
+  const threshold = thresholds[metric];
+  if (!threshold) return alert('Unknown metric for predictive demo');
+
+  const steps = 6; // number of synthetic points to inject
+  const H = kind === 'warning' ? 24 : 48; // target hours-to-threshold (approx)
+  const start = Number(document.getElementById(metric).value);
+  const end = computeEndForH(start, threshold, steps, H);
+  const vals = [];
+  const now = new Date();
+  // create readings spaced 1 hour apart ending at current time
+  for (let i = 0; i < steps; i++){
+    const t = new Date(now.getTime() - (steps - 1 - i) * 3600 * 1000);
+    const frac = i / (steps - 1 || 1);
+    const v = start + (end - start) * frac;
+    const payload = { machineId: machineId.value };
+    fields.forEach(f => payload[f] = Number(document.getElementById(f).value));
+    payload[metric] = Number(v.toFixed(2));
+    payload.ts = t.toISOString();
+    vals.push(payload);
+  }
+  status.textContent = `Sending ${kind} sequence for ${metric}...`;
+  await sendSequence(vals);
+  status.textContent = `Sent ${vals.length} readings for predictive ${kind} on ${metric}. Refresh analysis.`;
 }
 async function sendReading(){
   const payload = { machineId: machineId.value };
