@@ -23,10 +23,12 @@ Este repositorio contiene el desarrollo, documentación y recursos relacionados 
 > En construcción.
 
 ## Equipo
-Sony Mizrahi - Spark
-Jared Aldana Palacios - CODEX
-Jose Ulises Sotelo Ortiz - IGNITE
-Ricardo Iván Meléndez Vega - Quantum
+Sony Mizrahi - Spark \
+Jared Aldana Palacios - CODEX \
+Jose Ulises Sotelo Ortiz - IGNITE \
+Ricardo Iván Meléndez Vega - Quantum \
+Ernesto Enrique Urrea Lopez - Quantum
+
 
 ## Licencia
 
