@@ -135,6 +135,8 @@ loadAnalysis().catch(err => {
   document.body.innerHTML = `<main><section class="card"><h1>No se pudo cargar el panel</h1><p>${err.message}</p></section></main>`;
 });
 
+setInterval(loadAnalysis, 5000);
+
 // Dealer keyword-based chat widget
 (function(){
   function initChat(){
