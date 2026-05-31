@@ -28,6 +28,9 @@ PARTS = {
     "vibration_high": {"part": "Bearing and mount inspection kit", "sku": "JD-BRG-2240"},
     "battery_low": {"part": "Heavy-duty battery", "sku": "JD-BAT-7710"},
     "dpf_saturation": {"part": "DPF service kit", "sku": "JD-DPF-1500"},
+    "plow_tool_wear": {"part": "Plow tool kit replacement", "sku": "JD-PLOW-5210"},
+    "belt_wear": {"part": "Belt and belt tensioner kit", "sku": "JD-BELT-3340"},
+    "tools_condition": {"part": "General tool maintenance kit", "sku": "JD-TOOLS-2100"},
 }
 
 
@@ -59,6 +62,9 @@ def init_db() -> None:
                 battery_voltage REAL NOT NULL,
                 dpf_load REAL NOT NULL,
                 fuel_rate REAL NOT NULL,
+                plow_tool_wear REAL NOT NULL DEFAULT 0,
+                belt_wear REAL NOT NULL DEFAULT 0,
+                tools_condition REAL NOT NULL DEFAULT 0,
                 FOREIGN KEY(machine_id) REFERENCES machines(id)
             );
             CREATE TABLE IF NOT EXISTS parts_preparations (
@@ -75,6 +81,8 @@ def init_db() -> None:
         count = conn.execute("SELECT COUNT(*) AS c FROM machines").fetchone()["c"]
         if count == 0:
             seed_data(conn)
+        # If the DB already had seeded machines named 'Client XX', migrate them to 'Machine XX'
+        conn.execute("UPDATE machines SET customer = replace(customer, 'Client ', 'Machine ') WHERE customer LIKE 'Client %'")
 
 
 def seed_data(conn: sqlite3.Connection) -> None:
@@ -84,12 +92,12 @@ def seed_data(conn: sqlite3.Connection) -> None:
     for idx in range(1, 13):
         model = random.choice(MODELS)
         machine_id = f"JD-{model.split()[0]}-{1000 + idx}"
-        machines.append((machine_id, model, f"Client {idx:02d}", random.choice(["North", "Central", "South", "West"]), random.randint(350, 5400)))
+        machines.append((machine_id, model, f"Machine {idx:02d}", random.choice(["North", "Central", "South", "West"]), random.randint(350, 5400)))
     conn.executemany("INSERT INTO machines VALUES (?, ?, ?, ?, ?)", machines)
 
     for machine_id, model, customer, region, hours in machines:
         # A few machines are intentionally degrading to demonstrate predictive alerts.
-        profile = random.choice(["normal", "hot", "oil", "hydraulic", "vibration", "battery", "dpf"])
+        profile = random.choice(["normal", "hot", "oil", "hydraulic", "vibration", "battery", "dpf", "plow", "belt", "tools"])
         for h in range(168):
             ts = now - timedelta(hours=167 - h)
             t = h / 167
@@ -101,6 +109,9 @@ def seed_data(conn: sqlite3.Connection) -> None:
             battery_voltage = 12.9 - 0.15 * work_cycle + random.gauss(0, 0.04)
             dpf_load = 34 + 22 * work_cycle + 8 * math.sin(h / 18) + random.gauss(0, 2)
             fuel_rate = 8 + 9 * work_cycle + random.gauss(0, 0.8)
+            plow_tool_wear = 15 + 10 * work_cycle + random.gauss(0, 3)
+            belt_wear = 20 + 12 * work_cycle + random.gauss(0, 2)
+            tools_condition = 18 + 8 * work_cycle + random.gauss(0, 2)
             if profile == "hot":
                 engine_temp += 18 * t
             elif profile == "oil":
@@ -113,11 +124,17 @@ def seed_data(conn: sqlite3.Connection) -> None:
                 battery_voltage -= 1.4 * t
             elif profile == "dpf":
                 dpf_load += 45 * t
+            elif profile == "plow":
+                plow_tool_wear += 55 * t
+            elif profile == "belt":
+                belt_wear += 60 * t
+            elif profile == "tools":
+                tools_condition += 58 * t
             conn.execute(
                 """INSERT INTO readings
-                   (machine_id, ts, engine_temp, oil_pressure, hydraulic_pressure, vibration, battery_voltage, dpf_load, fuel_rate)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (machine_id, ts.isoformat(), engine_temp, oil_pressure, hydraulic_pressure, vibration, battery_voltage, dpf_load, fuel_rate),
+                   (machine_id, ts, engine_temp, oil_pressure, hydraulic_pressure, vibration, battery_voltage, dpf_load, fuel_rate, plow_tool_wear, belt_wear, tools_condition)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (machine_id, ts.isoformat(), engine_temp, oil_pressure, hydraulic_pressure, vibration, battery_voltage, dpf_load, fuel_rate, plow_tool_wear, belt_wear, tools_condition),
             )
 
 
@@ -141,6 +158,9 @@ def analyze_machine(machine: sqlite3.Row, rows: list[sqlite3.Row]) -> dict:
         "vibration": [r["vibration"] for r in last24],
         "battery_voltage": [r["battery_voltage"] for r in last24],
         "dpf_load": [r["dpf_load"] for r in last24],
+        "plow_tool_wear": [r["plow_tool_wear"] for r in last24],
+        "belt_wear": [r["belt_wear"] for r in last24],
+        "tools_condition": [r["tools_condition"] for r in last24],
     }
     rules = [
         ("engine_overheat", "Engine temperature rising", "engine_temp", 105, "above", "Cooling system may overheat", 5),
@@ -149,6 +169,9 @@ def analyze_machine(machine: sqlite3.Row, rows: list[sqlite3.Row]) -> dict:
         ("vibration_high", "Abnormal vibration", "vibration", 4.8, "above", "Bearing, belt, or mount wear", 4),
         ("battery_low", "Battery voltage weakening", "battery_voltage", 11.9, "below", "Starting/charging risk", 3),
         ("dpf_saturation", "DPF load increasing", "dpf_load", 85, "above", "Regeneration/service may be needed", 3),
+        ("plow_tool_wear", "Plow tool wear increasing", "plow_tool_wear", 80, "above", "Plow tools need replacement", 4),
+        ("belt_wear", "Belt wear increasing", "belt_wear", 80, "above", "Belts and tensioners need replacement", 4),
+        ("tools_condition", "Tools condition deteriorating", "tools_condition", 80, "above", "General tool maintenance required", 3),
     ]
     alerts = []
     tendencies = []
@@ -201,7 +224,7 @@ def analyze_machine(machine: sqlite3.Row, rows: list[sqlite3.Row]) -> dict:
 
 def get_analysis() -> dict:
     with connect() as conn:
-        machines = conn.execute("SELECT * FROM machines ORDER BY id").fetchall()
+        machines = conn.execute("SELECT * FROM machines ORDER BY customer").fetchall()
         fleet = []
         all_alerts = []
         for machine in machines:

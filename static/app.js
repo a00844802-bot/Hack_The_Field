@@ -183,3 +183,102 @@ $('refreshBtn').addEventListener('click', loadAnalysis);
 loadAnalysis().catch(err => {
   document.body.innerHTML = `<main><section class="card"><h1>Error al cargar</h1><p>${err.message}</p></section></main>`;
 });
+
+// CHATBOT FUNCTIONS
+function openChatbot() {
+  $('chatbotDialog').showModal();
+  $('chatInput').focus();
+}
+
+function closeChatbot() {
+  $('chatbotDialog').close();
+}
+
+function addChatMessage(text, isUser = true) {
+  const messagesDiv = $('chatMessages');
+  const messageEl = document.createElement('div');
+  messageEl.className = `chat-message ${isUser ? 'user' : 'bot'}`;
+  messageEl.innerHTML = `<div class="message-bubble ${isUser ? 'user' : 'bot'}">${text}</div>`;
+  messagesDiv.appendChild(messageEl);
+  messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
+
+function getChatbotResponse(query) {
+  if (!analysis) return "Cargando datos...";
+  
+  const queryLower = query.toLowerCase();
+  const fleet = analysis.fleet;
+  const allAlerts = analysis.alerts;
+  
+  // Respuestas según palabras clave
+  if (queryLower.includes('hola') || queryLower.includes('hola')) {
+    return "¡Hola! Soy tu asistente de mantenimiento predictivo 🤖. Puedo ayudarte con:\n- Estado de máquinas\n- Alertas activas\n- Máquinas con problemas\n- Piezas próximas a cambiar";
+  }
+  
+  if (queryLower.includes('cuántas máquinas') || queryLower.includes('cuantas maquinas') || queryLower.includes('total de máquinas')) {
+    return `Tienes ${fleet.length} máquinas en la flota. ${fleet.filter(f => f.status === 'critical').length} en estado crítico, ${fleet.filter(f => f.status === 'warning').length} con advertencias.`;
+  }
+  
+  if (queryLower.includes('crítica') || queryLower.includes('critical') || queryLower.includes('problema')) {
+    const critical = fleet.filter(f => f.status === 'critical');
+    if (critical.length === 0) return "¡Excelente! No hay máquinas en estado crítico.";
+    return `${critical.length} máquina(s) en estado crítico:\n${critical.map(f => `• ${f.machine.id} (${f.machine.customer})`).join('\n')}`;
+  }
+  
+  if (queryLower.includes('alertas') || queryLower.includes('alertas activas')) {
+    const criticalAlerts = allAlerts.filter(a => a.severity === 'critical');
+    const warningAlerts = allAlerts.filter(a => a.severity === 'warning');
+    return `Alertas activas:\n• Críticas: ${criticalAlerts.length}\n• Advertencias: ${warningAlerts.length}\n• Total: ${allAlerts.length}`;
+  }
+  
+  if (queryLower.includes('piezas') || queryLower.includes('mantenimiento') || queryLower.includes('cambio')) {
+    const topAlerts = allAlerts.slice(0, 3);
+    if (topAlerts.length === 0) return "Todas las máquinas están en buen estado.";
+    return `Próximas piezas a cambiar:\n${topAlerts.map(a => `• ${a.recommendedPart} (${a.machineId})`).join('\n')}`;
+  }
+  
+  if (queryLower.includes('horas') || queryLower.includes('uso')) {
+    const totalHours = fleet.reduce((sum, f) => sum + f.machine.hours, 0);
+    const avgHours = Math.round(totalHours / fleet.length);
+    return `Horas de uso:\n• Total: ${fmt(totalHours)}h\n• Promedio: ${fmt(avgHours)}h\n• Máxima: ${fmt(Math.max(...fleet.map(f => f.machine.hours)))}h`;
+  }
+  
+  if (queryLower.includes('máquina') || queryLower.includes('maquina') || queryLower.includes('vehicle')) {
+    const machineMatch = fleet.find(f => f.machine.id.toLowerCase().includes(queryLower.replace(/máquina|maquina|machine|vehicle/gi, '').trim()) || f.machine.customer.toLowerCase().includes(queryLower));
+    if (machineMatch) {
+      return `${machineMatch.machine.id} (${machineMatch.machine.customer}):\n• Modelo: ${machineMatch.machine.model}\n• Horas: ${fmt(machineMatch.machine.hours)}\n• Estado: ${machineMatch.status}\n• Riesgo: ${machineMatch.riskScore}/100`;
+    }
+  }
+  
+  if (queryLower.includes('riesgo') || queryLower.includes('risk')) {
+    const highRisk = fleet.filter(f => f.riskScore >= 60).sort((a, b) => b.riskScore - a.riskScore);
+    if (highRisk.length === 0) return "Todas las máquinas tienen riesgo bajo.";
+    return `Máquinas con mayor riesgo:\n${highRisk.slice(0, 3).map(f => `• ${f.machine.customer}: ${f.riskScore}/100`).join('\n')}`;
+  }
+  
+  if (queryLower.includes('sano') || queryLower.includes('bien') || queryLower.includes('saludables')) {
+    const healthy = fleet.filter(f => f.status === 'healthy');
+    return `${healthy.length} máquina(s) en buen estado: ${healthy.map(f => f.machine.customer).join(', ')}`;
+  }
+  
+  return "No entiendo bien tu pregunta. Prueba preguntar sobre:\n• Estado de máquinas\n• Alertas activas\n• Piezas a cambiar\n• Horas de uso\n• Máquinas con riesgo";
+}
+
+function sendChatMessage() {
+  const input = $('chatInput');
+  const message = input.value.trim();
+  if (!message) return;
+  
+  addChatMessage(message, true);
+  input.value = '';
+  
+  setTimeout(() => {
+    const response = getChatbotResponse(message);
+    addChatMessage(response, false);
+  }, 500);
+}
+
+// Allow Enter key to send message
+$('chatInput')?.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') sendChatMessage();
+});

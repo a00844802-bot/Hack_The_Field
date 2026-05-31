@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>FleetSight | Mantenimiento Predictivo John Deere</title>
+  <title>DeereMagic | Mantenimiento Predictivo John Deere</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -104,6 +104,22 @@
       <button>Cerrar</button>
     </form>
   </dialog>
+
+  <dialog id="chatbotDialog" class="chatbot-modal">
+    <div class="chatbot-container">
+      <div class="chatbot-header">
+        <h3>🤖 DeereMagic Assistant</h3>
+        <button class="close-btn" onclick="closeChatbot()">&times;</button>
+      </div>
+      <div id="chatMessages" class="chat-messages"></div>
+      <div class="chat-input-area">
+        <input type="text" id="chatInput" placeholder="Pregunta sobre tus máquinas..." class="chat-input" />
+        <button onclick="sendChatMessage()" class="chat-send-btn">Enviar</button>
+      </div>
+    </div>
+  </dialog>
+
+  <button id="chatbotBtn" class="chatbot-floating-btn" onclick="openChatbot()">🤖</button>
 
   <footer>
     <p>Hack The Field 2026 | John Deere Predictive Maintenance System</p>
