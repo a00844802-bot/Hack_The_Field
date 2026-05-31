@@ -11,6 +11,7 @@ import math
 import os
 import random
 import sqlite3
+import urllib.request
 from datetime import datetime, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -290,6 +291,8 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self):
+        if self.path == "/api/chat":
+            return self._handle_chat()
         if self.path != "/api/prepare-part":
             return self._json({"error": "Not found"}, 404)
         length = int(self.headers.get("Content-Length", 0))
@@ -303,6 +306,85 @@ class Handler(SimpleHTTPRequestHandler):
                 (body["machineId"], body["sku"], body["part"], body["reason"], datetime.now().isoformat(timespec="seconds")),
             )
         return self._json({"ok": True, "message": f"Prepared {body['part']} for {body['machineId']}"})
+
+    def _handle_chat(self):
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            return self._json({"error": "ANTHROPIC_API_KEY no configurada en el servidor."}, 500)
+
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length) or b"{}")
+        user_message = body.get("message", "").strip()
+        history = body.get("history", [])  # [{role, content}]
+        if not user_message:
+            return self._json({"error": "Mensaje vacío"}, 400)
+
+        # Build fleet context summary
+        data = get_analysis()
+        fleet_summary = _build_fleet_summary(data)
+
+        system_prompt = f"""Eres DeereMagic Assistant, el asistente inteligente de mantenimiento predictivo para John Deere.
+Tu trabajo es ayudar a los operadores y concesionarios a entender el estado de su flota de tractores,
+alertas de mantenimiento, piezas próximas a cambiar y riesgos operativos.
+
+Responde siempre en español, de forma concisa y útil. Usa emojis cuando sea apropiado.
+Si el usuario pregunta algo fuera del ámbito de la flota, redirige amablemente.
+
+=== DATOS ACTUALES DE LA FLOTA ===
+{fleet_summary}
+"""
+
+        messages = []
+        for h in history[-10:]:  # Mantener últimos 10 mensajes de contexto
+            if h.get("role") in ("user", "assistant") and h.get("content"):
+                messages.append({"role": h["role"], "content": h["content"]})
+        messages.append({"role": "user", "content": user_message})
+
+        payload = json.dumps({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1000,
+            "system": system_prompt,
+            "messages": messages,
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read())
+            reply = result["content"][0]["text"]
+            return self._json({"reply": reply})
+        except Exception as exc:
+            return self._json({"error": f"Error al contactar la API: {exc}"}, 502)
+
+
+def _build_fleet_summary(data: dict) -> str:
+    """Genera un resumen de texto de la flota para el contexto del chatbot."""
+    summary = []
+    d = data["dealer"]
+    s = d["summary"]
+    summary.append(f"Flota total: {s['machines']} máquinas | Críticas: {s['critical']} | Predictivas: {s['predictive']} | Saludables: {s['healthy']}")
+    summary.append("")
+    for item in data["fleet"]:
+        m = item["machine"]
+        alerts_text = ""
+        if item["alerts"]:
+            top = item["alerts"][0]
+            alerts_text = f" | Alerta: {top['title']} ({top['severity']})"
+        summary.append(f"  {m['id']} | {m['model']} | {m['customer']} | Región: {m['dealer_region']} | Horas: {m['hours']} | Riesgo: {item['riskScore']}/100{alerts_text}")
+    summary.append("")
+    summary.append("Piezas con mayor demanda:")
+    for p in d["partsForecast"][:5]:
+        summary.append(f"  {p['part']} (SKU: {p['sku']}) — {p['quantity']} máquinas afectadas")
+    return "\n".join(summary)
 
     def log_message(self, format, *args):
         print("%s - %s" % (self.address_string(), format % args))
