@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>FleetSight | Tractor Predictive Maintenance</title>
+  <title>FleetSight | Mantenimiento Predictivo John Deere</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -11,83 +11,104 @@
     <div class="brand">
       <img src="media/john-deere-logo-black-and-white.png" alt="John Deere logo" class="logo-img" width="80"/>
       <div>
-        <p class="eyebrow">Dealer Command Center</p>
-        <h1>DeerMagic</h1>
+        <p class="eyebrow"></p>
+        <h1>DeereMagic</h1>
       </div>
     </div>
-    <button id="refreshBtn">Refresh analysis</button>
+    <button id="refreshBtn"> Actualizar</button>
   </header>
 
   <main>
-    <section class="hero card">
-      <div>
-        <p class="eyebrow">Sensor database analysis</p>
-        <h2>Spot faults before downtime hits the field.</h2>
-        <p>The backend evaluates engine temperature, oil pressure, hydraulic pressure, vibration, battery voltage, DPF load, and usage hours to generate tendencies, current faults, and predictive maintenance alerts.</p>
+    <section class="hero-section" id="fleetView">
+      <div class="hero-text">
+        <p class="eyebrow">Estado de la Flota</p>
+        <h2>Desgaste General de Maquinaria</h2>
+        <p>Haz clic en un tractor para ver las piezas próximas a recibir servicio y tiempo estimado</p>
       </div>
-      <div class="hero-grid" id="summaryCards"></div>
+      
+      <div class="fleet-grid" id="tractorsGrid"></div>
     </section>
 
-    <section class="grid two">
-      <div class="card">
-        <div class="section-head">
+    <!-- VISTA DETALLE: MODAL DE TRACTOR -->
+    <dialog id="tractorDetail" class="tractor-modal">
+      <div class="modal-content">
+        <div class="modal-header">
           <div>
-            <p class="eyebrow">Client machinery alerts</p>
-            <h2>Predicted and current faults</h2>
+            <p class="eyebrow" id="detailEyebrow"></p>
+            <h2 id="detailTitle"></h2>
+            <p id="detailSubtitle" class="muted"></p>
           </div>
-          <select id="severityFilter" aria-label="Filter alerts by severity">
-            <option value="all">All severities</option>
-            <option value="critical">Critical</option>
-            <option value="warning">Warning</option>
-            <option value="watch">Watch</option>
-          </select>
+          <button class="close-btn" onclick="closeTractorDetail()">&times;</button>
         </div>
-        <div id="alertsList" class="alert-list"></div>
-      </div>
 
-      <div class="card">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Dealer usage dashboard</p>
-            <h2>Usage by region</h2>
+        <div class="detail-split">
+          <div class="detail-left">
+            <div class="tractor-visual">
+              <svg id="tractorSVG" viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
+                <img src="media/vehiculo1.png" alt="Tractor" width="400" height="240"/>
+              </svg>
+            </div>
+            
+            <div class="horas-section">
+              <p class="eyebrow">Horas de Uso</p>
+              <div class="horas-meter">
+                <div class="horas-bar" id="horasBar" style="width: 0%"></div>
+              </div>
+              <p id="horasText" style="text-align: center; font-weight: bold; margin-top: 0.5rem;"></p>
+            </div>
+
+            <div class="risk-score">
+              <p class="eyebrow">Índice de Riesgo</p>
+              <div class="risk-circle" id="riskCircle">
+                <span id="riskValue">0</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="detail-right">
+            <div class="parts-section">
+              <h3>⚠️ Próximas Reparaciones</h3>
+              <p class="muted">Estas piezas necesitarán servicio próximamente</p>
+              <div id="topParts" class="top-parts-list"></div>
+            </div>
           </div>
         </div>
-        <div id="regionUsage" class="bars"></div>
-        <hr />
-        <h3>Prepare parts for likely client faults</h3>
-        <div id="partsForecast" class="parts"></div>
-      </div>
-    </section>
 
-    <section class="card">
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="closeTractorDetail()">Cerrar</button>
+          <button class="btn-primary" id="prepareAllBtn">Preparar Todas las Piezas</button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- VISTA ALTERNATIVA: TABLA (ANÁLISIS DETALLADO) -->
+    <section class="card" style="margin-top: 2rem; display: none;" id="analyticsSection">
       <div class="section-head">
         <div>
-          <p class="eyebrow">Fleet health</p>
-          <h2>Machines, tendencies, and risk</h2>
+          <p class="eyebrow">Análisis Detallado</p>
+          <h2>Alertas y Tendencias</h2>
         </div>
-        <input id="searchBox" placeholder="Search by machine, model, or client" />
+        <select id="severityFilter" aria-label="Filtrar por severidad">
+          <option value="all">Todas las severidades</option>
+          <option value="critical">Crítica</option>
+          <option value="warning">Advertencia</option>
+          <option value="watch">Observar</option>
+        </select>
       </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>Machine</th><th>Client</th><th>Model</th><th>Hours</th><th>Risk</th><th>Main tendencies</th><th>Status</th></tr>
-          </thead>
-          <tbody id="fleetTable"></tbody>
-        </table>
-      </div>
+      <div id="alertsList" class="alert-list"></div>
     </section>
   </main>
 
   <dialog id="partDialog">
     <form method="dialog">
-      <h2>Parts prepared</h2>
+      <h2>Pieza Preparada</h2>
       <p id="dialogMessage"></p>
-      <button>Close</button>
+      <button>Cerrar</button>
     </form>
   </dialog>
 
   <footer>
-    <p>Prototype only. It uses John Deere-inspired colors and a text logo placeholder; replace with licensed brand assets only when you have permission.</p>
+    <p>Hack The Field 2026 | John Deere Predictive Maintenance System</p>
   </footer>
   <script src="app.js"></script>
 </body>
