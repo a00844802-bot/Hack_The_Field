@@ -132,8 +132,21 @@ def slope(values: list[float]) -> float:
 
 
 def analyze_machine(machine: sqlite3.Row, rows: list[sqlite3.Row]) -> dict:
-    latest = rows[-1]
-    last24 = rows[-24:] if len(rows) >= 24 else rows
+    if not rows:
+        latest = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "engine_temp": 85.0,
+            "oil_pressure": 48.0,
+            "hydraulic_pressure": 3020.0,
+            "vibration": 2.1,
+            "battery_voltage": 12.9,
+            "dpf_load": 34.0,
+            "fuel_rate": 8.0,
+        }
+        last24 = [latest]
+    else:
+        latest = rows[-1]
+        last24 = rows[-24:] if len(rows) >= 24 else rows
     metrics = {
         "engine_temp": [r["engine_temp"] for r in last24],
         "oil_pressure": [r["oil_pressure"] for r in last24],
@@ -302,6 +315,17 @@ def add_sensor_reading(body: dict) -> dict:
     }, 201
 
 
+def clear_db() -> dict:
+    with connect() as conn:
+        conn.executescript(
+            """
+            DELETE FROM parts_preparations;
+            DELETE FROM readings;
+            """
+        )
+    return {"ok": True, "message": "All telemetry and demo preparation history has been cleared."}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
@@ -357,6 +381,9 @@ class Handler(SimpleHTTPRequestHandler):
                     (body["machineId"], body["sku"], body["part"], body["reason"], datetime.now().isoformat(timespec="seconds")),
                 )
             return self._json({"ok": True, "message": f"Prepared {body['part']} for {body['machineId']}"})
+
+        if parsed.path == "/api/clear-db":
+            return self._json(clear_db())
 
         return self._json({"error": "Not found"}, 404)
 

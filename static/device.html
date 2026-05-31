@@ -40,6 +40,7 @@
         <button onclick="preset('battery')">Trigger battery low</button>
         <button onclick="preset('dpf')">Trigger DPF saturation</button>
         <button onclick="sendReading()">Send telemetry</button>
+        <button onclick="clearDatabase()" class="danger">Clear telemetry and demo history</button>
         <button onclick="generatePredictive('engine_temp','watch')">Trigger watch (engine temp)</button>
         <button onclick="generatePredictive('engine_temp','warning')">Trigger warning (engine temp)</button>
         <button onclick="generatePredictive('oil_pressure','watch')">Trigger watch (oil pressure)</button>
@@ -123,6 +124,18 @@ async function sendReading(){
   const data = await res.json();
   status.textContent = JSON.stringify(data, null, 2);
 }
+
+async function clearDatabase(){
+  if (!confirm('Clear all telemetry and demo history? Machine definitions will be preserved.')) return;
+  status.textContent = 'Clearing telemetry and demo history...';
+  const res = await fetch('/api/clear-db', {method:'POST'});
+  const data = await res.json();
+  status.textContent = data.ok ? data.message : (data.error || 'Failed to clear telemetry history');
+  if (res.ok && data.ok) {
+    await init();
+  }
+}
+
 init().catch(e => status.textContent = e.message);
 </script>
 </body>
