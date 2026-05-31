@@ -2,15 +2,20 @@
 """Tractor predictive maintenance demo backend.
 
 Run: python server.py
-Open: http://localhost:8000
+Open: http://<your-ip>:8000 from other devices on the same network
 """
 from __future__ import annotations
 
 import json
 import math
+import base64
+import hashlib
 import os
 import random
+import socketserver
 import sqlite3
+import struct
+import threading
 from datetime import datetime, timedelta
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -29,6 +34,94 @@ PARTS = {
     "battery_low": {"part": "Heavy-duty battery", "sku": "JD-BAT-7710"},
     "dpf_saturation": {"part": "DPF service kit", "sku": "JD-DPF-1500"},
 }
+
+WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+ws_clients: list[object] = []
+ws_clients_lock = threading.Lock()
+
+
+def build_ws_frame(text: str) -> bytes:
+    payload = text.encode("utf-8")
+    header = bytearray([0x81])
+    length = len(payload)
+    if length < 126:
+        header.append(length)
+    elif length < 65536:
+        header.append(126)
+        header.extend(struct.pack("!H", length))
+    else:
+        header.append(127)
+        header.extend(struct.pack("!Q", length))
+    return bytes(header) + payload
+
+
+def broadcast_analysis_update() -> None:
+    message = json.dumps({"type": "analysis", "data": get_analysis()})
+    frame = build_ws_frame(message)
+    with ws_clients_lock:
+        clients = list(ws_clients)
+    for client in clients:
+        try:
+            client.sendall(frame)
+        except OSError:
+            with ws_clients_lock:
+                if client in ws_clients:
+                    ws_clients.remove(client)
+
+
+class WebSocketHandler(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        try:
+            data = self.request.recv(2048).decode("utf-8", errors="ignore")
+        except OSError:
+            return
+
+        if "Sec-WebSocket-Key:" not in data:
+            return
+
+        key = next(
+            (line.split(":", 1)[1].strip() for line in data.splitlines() if line.startswith("Sec-WebSocket-Key:")),
+            None,
+        )
+
+        if not key:
+            return
+
+        accept = base64.b64encode(hashlib.sha1((key + WS_GUID).encode()).digest()).decode()
+        response = (
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Accept: {accept}\r\n\r\n"
+        )
+        self.request.sendall(response.encode("ascii"))
+
+        with ws_clients_lock:
+            ws_clients.append(self.request)
+
+        try:
+            while True:
+                header = self.request.recv(2)
+                if not header or len(header) < 2:
+                    break
+                fin_and_opcode, mask_and_len = header
+                opcode = fin_and_opcode & 0x0F
+                length = mask_and_len & 0x7F
+                if length == 126:
+                    ext = self.request.recv(2)
+                    length = struct.unpack("!H", ext)[0]
+                elif length == 127:
+                    ext = self.request.recv(8)
+                    length = struct.unpack("!Q", ext)[0]
+                mask = self.request.recv(4) if (mask_and_len & 0x80) else None
+                if length:
+                    self.request.recv(length)
+                if opcode == 0x8:
+                    break
+        finally:
+            with ws_clients_lock:
+                if self.request in ws_clients:
+                    ws_clients.remove(self.request)
 
 
 def connect() -> sqlite3.Connection:
@@ -307,6 +400,7 @@ def add_sensor_reading(body: dict) -> dict:
         )
         rows = conn.execute("SELECT * FROM readings WHERE machine_id=? ORDER BY ts", (machine_id,)).fetchall()
         analyzed = analyze_machine(machine, rows)
+    broadcast_analysis_update()
     return {
         "ok": True,
         "message": f"Telemetry accepted for {machine_id}",
@@ -323,6 +417,7 @@ def clear_db() -> dict:
             DELETE FROM readings;
             """
         )
+    broadcast_analysis_update()
     return {"ok": True, "message": "All telemetry and demo preparation history has been cleared."}
 
 
@@ -380,6 +475,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "INSERT INTO parts_preparations (machine_id, sku, part, reason, created_at) VALUES (?, ?, ?, ?, ?)",
                     (body["machineId"], body["sku"], body["part"], body["reason"], datetime.now().isoformat(timespec="seconds")),
                 )
+            broadcast_analysis_update()
             return self._json({"ok": True, "message": f"Prepared {body['part']} for {body['machineId']}"})
 
         if parsed.path == "/api/clear-db":
@@ -391,8 +487,21 @@ class Handler(SimpleHTTPRequestHandler):
         print("%s - %s" % (self.address_string(), format % args))
 
 
+class ThreadedWebSocketServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
 if __name__ == "__main__":
     init_db()
     port = int(os.environ.get("PORT", "8000"))
-    print(f"Serving predictive maintenance dashboard on http://localhost:{port}")
-    ThreadingHTTPServer(("", port), Handler).serve_forever()
+    ws_port = int(os.environ.get("WS_PORT", "8001"))
+    host = "0.0.0.0"
+    print(f"Serving predictive maintenance dashboard on http://{host}:{port}")
+    print(f"Broadcasting live updates on ws://{host}:{ws_port}/ws")
+    print("Access this from other devices using your machine's IP address on the same network.")
+
+    ws_server = ThreadedWebSocketServer((host, ws_port), WebSocketHandler)
+    threading.Thread(target=ws_server.serve_forever, daemon=True).start()
+
+    ThreadingHTTPServer((host, port), Handler).serve_forever()

@@ -26,6 +26,47 @@ const statusLabels = {
   watch: 'Observación',
 };
 
+const WS_PORT = 8001;
+const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:${WS_PORT}/ws`;
+let ws = null;
+let reconnectTimer = null;
+
+function connectWebSocket() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+
+  ws = new WebSocket(wsUrl);
+  ws.addEventListener('open', () => {
+    console.info('Realtime websocket connected');
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  });
+
+  ws.addEventListener('message', (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      if (payload.type === 'analysis' && payload.data) {
+        analysis = payload.data;
+        render();
+      }
+    } catch (error) {
+      console.warn('Invalid websocket payload', error);
+    }
+  });
+
+  ws.addEventListener('close', () => {
+    console.info('Realtime websocket disconnected, retrying...');
+    reconnectTimer = setTimeout(connectWebSocket, 2000);
+  });
+
+  ws.addEventListener('error', () => {
+    ws.close();
+  });
+}
+
 async function loadAnalysis() {
   const res = await fetch('/api/analysis');
   analysis = await res.json();
@@ -133,6 +174,8 @@ $('searchBox').addEventListener('input', renderFleet);
 
 loadAnalysis().catch(err => {
   document.body.innerHTML = `<main><section class="card"><h1>No se pudo cargar el panel</h1><p>${err.message}</p></section></main>`;
+}).finally(() => {
+  connectWebSocket();
 });
 
 setInterval(loadAnalysis, 5000);
