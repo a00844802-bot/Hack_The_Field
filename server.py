@@ -152,6 +152,7 @@ def analyze_machine(machine: sqlite3.Row, rows: list[sqlite3.Row]) -> dict:
     ]
     alerts = []
     tendencies = []
+    cycle_count = sum(1 for r in rows if r["fuel_rate"] > 12.5)
     for code, title, metric, threshold, direction, detail, weight in rules:
         current = float(latest[metric])
         m_slope = slope(metrics[metric])
@@ -194,9 +195,13 @@ def analyze_machine(machine: sqlite3.Row, rows: list[sqlite3.Row]) -> dict:
             "trend24h": round(trend_value, 2),
             "direction": "up" if trend_value > 0.4 else "down" if trend_value < -0.4 else "stable",
         })
+    tendencies.extend([
+        {"metric": "usage_hours", "current": machine["hours"], "trend24h": 0, "direction": "stable"},
+        {"metric": "cycles", "current": cycle_count, "trend24h": 0, "direction": "stable"},
+    ])
     risk_score = min(100, round(sum({"critical": 32, "warning": 20, "watch": 10}.get(a["severity"], 0) for a in alerts) + machine["hours"] / 180))
     status = "critical" if any(a["severity"] == "critical" for a in alerts) else "warning" if alerts else "healthy"
-    return {"machine": dict(machine), "latest": dict(latest), "alerts": alerts, "tendencies": tendencies, "riskScore": risk_score, "status": status}
+    return {"machine": dict(machine), "latest": dict(latest), "alerts": alerts, "tendencies": tendencies, "riskScore": risk_score, "status": status, "usage_hours": machine["hours"], "cycles": cycle_count}
 
 
 def get_analysis() -> dict:

@@ -23,7 +23,7 @@
       <div>
         <p class="eyebrow">Análisis de base de datos de sensores</p>
         <h2>Detecta fallos antes de que el tiempo de inactividad afecte al campo.</h2>
-        <p>El backend evalúa la temperatura del motor, la presión de aceite, la presión hidráulica, la vibración, el voltaje de la batería, la carga del DPF y las horas de uso para generar tendencias, fallos actuales y alertas de mantenimiento predictivo.</p>
+        <p>Este sistema evalúa parametros de la máquina como: la temperatura del motor, la presión de aceite, la presión hidráulica, la vibración, el voltaje de la batería, la carga del DPF y las horas de uso para generar tendencias, fallos actuales y alertas de mantenimiento predictivo.</p>
       </div>
       <div class="hero-grid" id="summaryCards"></div>
     </section>
@@ -90,5 +90,21 @@
     <p>Sólo prototipo. Utiliza colores inspirados en John Deere y un logotipo de texto de marcador de posición; reemplaza por activos de marca con licencia sólo cuando tengas permiso.</p>
   </footer>
   <script src="app.js"></script>
+
+  <!-- Chat widget: dealer keyword-based assistant -->
+  <div id="chatWidget">
+    <button id="chatToggle" class="chat-button" aria-label="Open dealer assistant">💬</button>
+    <div id="chatPopup" class="chat-popup" aria-hidden="true">
+      <div class="chat-header">
+        <div class="chat-title">Asistente del concesionario</div>
+        <button id="chatClose" class="chat-close" aria-label="Cerrar">✕</button>
+      </div>
+      <div id="chatMessages" class="chat-messages" role="log" aria-live="polite"></div>
+      <form id="chatForm" class="chat-form">
+        <input id="chatInput" autocomplete="off" placeholder="Escribe: resumen, alertas recientes, repuestos..." />
+        <button type="submit">Enviar</button>
+      </form>
+    </div>
+  </div>
 </body>
 </html>
