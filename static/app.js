@@ -3,6 +3,11 @@ let selectedMachine = null;
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => new Intl.NumberFormat().format(n);
+const vehicleImages = ['media/vehiculo1.png', 'media/vehiculo2.png', 'media/vehiculo3.png'];
+
+function getVehicleImage(index) {
+  return vehicleImages[index % vehicleImages.length];
+}
 
 async function loadAnalysis() {
   const res = await fetch('/api/analysis');
@@ -29,7 +34,9 @@ function getRiskStatus(riskScore) {
 
 function renderFleetGrid() {
   const grid = $('tractorsGrid');
-  grid.innerHTML = analysis.fleet.map(f => {
+  grid.innerHTML = analysis.fleet.map((f, index) => {
+    const vehicleImage = getVehicleImage(index);
+    f.vehicleImage = vehicleImage;
     const hours = f.machine.hours;
     const maxHours = 5400;
     const usagePercent = Math.min(100, (hours / maxHours) * 100);
@@ -39,13 +46,7 @@ function renderFleetGrid() {
     return `
       <div class="tractor-card" onclick="openTractorDetail('${f.machine.id}')">
         <div class="tractor-icon-box">
-          <svg viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
-            <rect x="20" y="50" width="160" height="30" rx="5" fill="#367C2B" stroke="#27251F" stroke-width="2"/>
-            <circle cx="40" cy="85" r="15" fill="#27251F" stroke="#666" stroke-width="1"/>
-            <circle cx="160" cy="85" r="15" fill="#27251F" stroke="#666" stroke-width="1"/>
-            <rect x="110" y="35" width="40" height="20" rx="3" fill="#FFDE00" stroke="#27251F" stroke-width="2"/>
-            <text x="130" y="50" text-anchor="middle" font-size="12" fill="#27251F" font-weight="bold">JD</text>
-          </svg>
+          <img src="${vehicleImage}" alt="${f.machine.model}" class="tractor-preview" />
         </div>
         
         <div class="tractor-info">
@@ -88,6 +89,11 @@ async function openTractorDetail(machineId) {
   $('detailEyebrow').textContent = machine.model;
   $('detailTitle').textContent = machine.id;
   $('detailSubtitle').textContent = `${machine.customer} • ${machine.dealer_region}`;
+  const detailImage = $('tractorImage');
+  if (detailImage) {
+    detailImage.src = selectedMachine.vehicleImage || getVehicleImage(0);
+    detailImage.alt = machine.model;
+  }
 
   // Llenar barra de horas
   $('horasBar').style.width = usagePercent + '%';
