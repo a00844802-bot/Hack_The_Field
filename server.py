@@ -242,6 +242,61 @@ def get_analysis() -> dict:
         }
 
 
+def add_sensor_reading(body: dict) -> dict:
+    """Accept one live telemetry reading from a demo device and re-run analysis."""
+    machine_id = body.get("machineId") or body.get("machine_id")
+    if not machine_id:
+        return {"error": "Missing machineId"}, 400
+
+    fields = [
+        "engine_temp",
+        "oil_pressure",
+        "hydraulic_pressure",
+        "vibration",
+        "battery_voltage",
+        "dpf_load",
+        "fuel_rate",
+    ]
+    missing = [f for f in fields if body.get(f) is None]
+    if missing:
+        return {"error": f"Missing sensor fields: {', '.join(missing)}"}, 400
+
+    try:
+        values = {f: float(body[f]) for f in fields}
+    except (TypeError, ValueError):
+        return {"error": "All sensor fields must be numbers"}, 400
+
+    ts = body.get("ts") or datetime.now().isoformat(timespec="seconds")
+    with connect() as conn:
+        machine = conn.execute("SELECT * FROM machines WHERE id=?", (machine_id,)).fetchone()
+        if not machine:
+            return {"error": f"Machine not found: {machine_id}"}, 404
+        conn.execute(
+            """INSERT INTO readings
+               (machine_id, ts, engine_temp, oil_pressure, hydraulic_pressure, vibration, battery_voltage, dpf_load, fuel_rate)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                machine_id,
+                ts,
+                values["engine_temp"],
+                values["oil_pressure"],
+                values["hydraulic_pressure"],
+                values["vibration"],
+                values["battery_voltage"],
+                values["dpf_load"],
+                values["fuel_rate"],
+            ),
+        )
+        rows = conn.execute("SELECT * FROM readings WHERE machine_id=? ORDER BY ts", (machine_id,)).fetchall()
+        analyzed = analyze_machine(machine, rows)
+    return {
+        "ok": True,
+        "message": f"Telemetry accepted for {machine_id}",
+        "machine": analyzed,
+        "alerts": analyzed["alerts"],
+    }, 201
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
@@ -252,8 +307,17 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
         self.wfile.write(payload)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -267,19 +331,29 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self):
-        if self.path != "/api/prepare-part":
-            return self._json({"error": "Not found"}, 404)
+        parsed = urlparse(self.path)
         length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length) or b"{}")
-        required = ["machineId", "sku", "part", "reason"]
-        if not all(body.get(k) for k in required):
-            return self._json({"error": "Missing required fields"}, 400)
-        with connect() as conn:
-            conn.execute(
-                "INSERT INTO parts_preparations (machine_id, sku, part, reason, created_at) VALUES (?, ?, ?, ?, ?)",
-                (body["machineId"], body["sku"], body["part"], body["reason"], datetime.now().isoformat(timespec="seconds")),
-            )
-        return self._json({"ok": True, "message": f"Prepared {body['part']} for {body['machineId']}"})
+        try:
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except json.JSONDecodeError:
+            return self._json({"error": "Invalid JSON body"}, 400)
+
+        if parsed.path == "/api/readings":
+            data, status = add_sensor_reading(body)
+            return self._json(data, status)
+
+        if parsed.path == "/api/prepare-part":
+            required = ["machineId", "sku", "part", "reason"]
+            if not all(body.get(k) for k in required):
+                return self._json({"error": "Missing required fields"}, 400)
+            with connect() as conn:
+                conn.execute(
+                    "INSERT INTO parts_preparations (machine_id, sku, part, reason, created_at) VALUES (?, ?, ?, ?, ?)",
+                    (body["machineId"], body["sku"], body["part"], body["reason"], datetime.now().isoformat(timespec="seconds")),
+                )
+            return self._json({"ok": True, "message": f"Prepared {body['part']} for {body['machineId']}"})
+
+        return self._json({"error": "Not found"}, 404)
 
     def log_message(self, format, *args):
         print("%s - %s" % (self.address_string(), format % args))

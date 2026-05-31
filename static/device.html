@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Demo Telemetry Sender</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    .device-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}.device-actions{display:flex;flex-wrap:wrap;gap:10px}.status-box{white-space:pre-wrap;background:#f4f6f0;border-radius:16px;padding:14px;border:1px solid #d9decf}label{display:grid;gap:6px;font-weight:700}input,select{padding:11px;border-radius:12px;border:1px solid #c9d0bd}.small{font-size:.9rem}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo-mark">JD</div>
+      <div><p class="eyebrow">Remote demo device</p><h1>Send Live Tractor Telemetry</h1></div>
+    </div>
+    <a class="button-link" href="/">Back to dashboard</a>
+  </header>
+  <main>
+    <section class="card">
+      <p>This page simulates another device in the field. Open it from a phone or another laptop using the server IP, choose a machine, and send normal or fault-like telemetry.</p>
+      <div class="device-grid">
+        <label>Machine<select id="machineId"></select></label>
+        <label>Engine temp °C<input id="engine_temp" type="number" value="92" step="0.1"></label>
+        <label>Oil pressure PSI<input id="oil_pressure" type="number" value="44" step="0.1"></label>
+        <label>Hydraulic pressure PSI<input id="hydraulic_pressure" type="number" value="2950" step="1"></label>
+        <label>Vibration mm/s<input id="vibration" type="number" value="2.8" step="0.1"></label>
+        <label>Battery voltage<input id="battery_voltage" type="number" value="12.6" step="0.1"></label>
+        <label>DPF load %<input id="dpf_load" type="number" value="52" step="0.1"></label>
+        <label>Fuel rate L/hr<input id="fuel_rate" type="number" value="15" step="0.1"></label>
+      </div>
+      <hr>
+      <div class="device-actions">
+        <button onclick="preset('normal')">Normal reading</button>
+        <button onclick="preset('overheat')">Trigger overheat</button>
+        <button onclick="preset('oil')">Trigger low oil pressure</button>
+        <button onclick="preset('hydraulic')">Trigger hydraulic drop</button>
+        <button onclick="preset('vibration')">Trigger vibration</button>
+        <button onclick="sendReading()">Send telemetry</button>
+      </div>
+      <p class="muted small">After sending, return to the dashboard and click “Refresh analysis.”</p>
+      <div id="status" class="status-box">Waiting for telemetry...</div>
+    </section>
+  </main>
+<script>
+const fields = ['engine_temp','oil_pressure','hydraulic_pressure','vibration','battery_voltage','dpf_load','fuel_rate'];
+async function init(){
+  const res = await fetch('/api/analysis');
+  const data = await res.json();
+  machineId.innerHTML = data.fleet.map(f => `<option value="${f.machine.id}">${f.machine.id} — ${f.machine.customer}</option>`).join('');
+}
+function setVals(vals){ for (const [k,v] of Object.entries(vals)) document.getElementById(k).value = v; }
+function preset(name){
+  const presets = {
+    normal:{engine_temp:92,oil_pressure:44,hydraulic_pressure:2950,vibration:2.8,battery_voltage:12.6,dpf_load:52,fuel_rate:15},
+    overheat:{engine_temp:113,oil_pressure:41,hydraulic_pressure:2920,vibration:3.1,battery_voltage:12.5,dpf_load:58,fuel_rate:18},
+    oil:{engine_temp:96,oil_pressure:29,hydraulic_pressure:2910,vibration:3.0,battery_voltage:12.5,dpf_load:60,fuel_rate:17},
+    hydraulic:{engine_temp:94,oil_pressure:42,hydraulic_pressure:2420,vibration:3.4,battery_voltage:12.4,dpf_load:57,fuel_rate:16},
+    vibration:{engine_temp:95,oil_pressure:40,hydraulic_pressure:2890,vibration:5.6,battery_voltage:12.4,dpf_load:59,fuel_rate:16}
+  };
+  setVals(presets[name]);
+}
+async function sendReading(){
+  const payload = { machineId: machineId.value };
+  fields.forEach(f => payload[f] = Number(document.getElementById(f).value));
+  const res = await fetch('/api/readings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+  const data = await res.json();
+  status.textContent = JSON.stringify(data, null, 2);
+}
+init().catch(e => status.textContent = e.message);
+</script>
+</body>
+</html>
